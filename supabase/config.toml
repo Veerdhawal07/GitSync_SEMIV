@@ -1,0 +1,4 @@
+# GitSync Supabase Configuration
+# TODO: Update with your project ID when ready
+
+project_id = "your-project-id-here"

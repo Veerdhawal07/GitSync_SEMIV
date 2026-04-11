@@ -1,0 +1,8 @@
+fastapi[standard]
+sqlalchemy
+asyncpg
+pydantic
+python-dotenv
+openai
+websockets
+greenlet
