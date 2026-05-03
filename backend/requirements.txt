@@ -4,5 +4,6 @@ asyncpg
 pydantic
 python-dotenv
 openai
+google-generativeai
 websockets
 greenlet

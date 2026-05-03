@@ -1,13 +1,14 @@
 import subprocess
 import os
 import shutil
+import tempfile
 from typing import List, Dict
 
 class GitEngine:
-    def __init__(self, work_dir: str = "/tmp/gitsync_workspaces"):
-        self.work_dir = work_dir
-        if not os.path.exists(self.work_dir):
-            os.makedirs(self.work_dir, exist_ok=True)
+    def __init__(self):
+        # Use platform-safe temp dir (works on Windows + Linux)
+        self.work_dir = os.path.join(tempfile.gettempdir(), "gitsync_workspaces")
+        os.makedirs(self.work_dir, exist_ok=True)
 
     def _run_git(self, args: List[str], repo_path: str) -> Dict[str, any]:
         try:
@@ -22,10 +23,22 @@ class GitEngine:
         except subprocess.CalledProcessError as e:
             return {"success": False, "output": e.stdout, "error": e.stderr}
 
-    def clone_repo(self, repo_url: str, repo_name: str) -> str:
+    def clone_repo(self, repo_url: str, repo_name: str, default_branch: str = "main") -> str:
         repo_path = os.path.join(self.work_dir, repo_name)
+        
         if os.path.exists(repo_path):
-            return repo_path # Already cloned
+            # Verify the repo is valid (has commits) before reusing
+            check = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path, capture_output=True, text=True
+            )
+            if check.returncode == 0:
+                # Valid repo - sync to target branch
+                self.fetch_and_pull(repo_path, default_branch)
+                return repo_path
+            else:
+                # Corrupt/empty - delete and reclone
+                shutil.rmtree(repo_path, ignore_errors=True)
         
         res = subprocess.run(
             ["git", "clone", repo_url, repo_path],
@@ -33,20 +46,24 @@ class GitEngine:
             text=True
         )
         if res.returncode == 0:
+            # After cloning, ensure we are on the right branch
+            self.fetch_and_pull(repo_path, default_branch)
             return repo_path
         raise Exception(f"Failed to clone repo: {res.stderr}")
 
     def fetch_and_pull(self, repo_path: str, branch: str = "main"):
-        # ensure we have updates
         self._run_git(["fetch", "origin"], repo_path)
-        return self._run_git(["pull", "origin", branch], repo_path)
+        # Check if branch exists locally, if not create it from origin
+        self._run_git(["checkout", "-B", branch, f"origin/{branch}"], repo_path)
+        return self._run_git(["reset", "--hard", f"origin/{branch}"], repo_path)
 
     def checkout_branch(self, branch_name: str, repo_path: str):
         return self._run_git(["checkout", branch_name], repo_path)
 
     def merge_branch(self, source_branch: str, target_branch: str, repo_path: str):
+        self._run_git(["fetch", "origin", f"{source_branch}:{source_branch}"], repo_path)
         self.checkout_branch(target_branch, repo_path)
-        res = self._run_git(["merge", source_branch], repo_path)
+        res = self._run_git(["merge", source_branch, "--allow-unrelated-histories"], repo_path)
         return res
 
     def get_diff(self, repo_path: str):
@@ -78,4 +95,10 @@ class GitEngine:
         return self._run_git(["add", file_path_rel], repo_path)
 
     def commit_resolution(self, repo_path: str, message: str = "Merge conflict resolved by GitSync AI"):
+        # Ensure git user config is set for commits
+        self._run_git(["config", "user.email", "gitsync@bot.com"], repo_path)
+        self._run_git(["config", "user.name", "GitSync Bot"], repo_path)
         return self._run_git(["commit", "-m", message], repo_path)
+
+    def push_branch(self, branch: str, repo_path: str):
+        return self._run_git(["push", "origin", branch], repo_path)

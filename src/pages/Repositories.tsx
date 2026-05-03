@@ -1,11 +1,25 @@
 import { useState, useEffect } from "react";
+import plantumlEncoder from "plantuml-encoder";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, CheckCircle2, Eye, ExternalLink, Loader2 } from "lucide-react";
+import { Plus, CheckCircle2, Eye, ExternalLink, Loader2, GitGraph, Copy, Share2, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Repo {
   name: string;
@@ -30,6 +44,10 @@ const Repositories = () => {
   const [repoActivities, setRepoActivities] = useState<Record<string, { text: string; time: string; type: string }[]>>({});
   const [activityLoading, setActivityLoading] = useState<string | null>(null);
   const [visibleActivitiesCount, setVisibleActivitiesCount] = useState<number>(10);
+  
+  const [umlData, setUmlData] = useState<{ code: string; summary: string; type: string } | null>(null);
+  const [generatingUml, setGeneratingUml] = useState<string | null>(null);
+  const [showUmlModal, setShowUmlModal] = useState(false);
 
   const { toast } = useToast();
 
@@ -284,6 +302,50 @@ const Repositories = () => {
     }
   };
 
+  const handleGenerateUML = async (repo: Repo, type: string = "Class") => {
+    if (!repo.autoMerge) {
+      toast({ title: "Enable Repository First", description: "Please enable GitSync for this repo to allow AI analysis." });
+      return;
+    }
+    
+    setGeneratingUml(repo.name);
+    try {
+      const backendRes = await fetch('/api/repos/', {
+        headers: {
+          'x-supabase-user-id': session?.user.id,
+          'x-supabase-user-email': session?.user.email || '',
+        }
+      });
+      const data = await backendRes.json();
+      const internalRepo = data.repositories.find((r: any) => r.repo_name === repo.name);
+      
+      if (!internalRepo) {
+        throw new Error("Repo mapping failed");
+      }
+
+      const res = await fetch(`/api/repos/${internalRepo.id}/generate-uml?type=${type}`, {
+        method: 'POST',
+        headers: {
+          'x-supabase-user-id': session?.user.id,
+        }
+      });
+      
+      if (res.ok) {
+        const result = await res.json();
+        setUmlData({ code: result.plant_uml_code, summary: result.analysis_summary, type });
+        setShowUmlModal(true);
+        toast({ title: `${type} UML Generated!`, description: "Architecture analysis complete." });
+      } else {
+        throw new Error("Failed to generate UML");
+      }
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Analysis Failed", description: "Could not generate PlantUML for this repository.", variant: "destructive" });
+    } finally {
+      setGeneratingUml(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -468,19 +530,49 @@ const Repositories = () => {
                 <span className="text-sm text-muted-foreground">Auto Collaboration</span>
                 <Switch defaultChecked={repo.autoMerge} />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant={viewActivity === repo.name ? "secondary" : "outline"}
                   size="sm"
-                  className="flex-1 text-xs gap-1"
+                  className="flex-1 min-w-[100px] text-[10px] h-8 gap-1"
                   onClick={() => handleViewActivity(repo.name, repo.owner)}
                 >
                   <Eye className="h-3 w-3" />
-                  {activityLoading === repo.name ? "Loading..." : "View Activity"}
+                  {activityLoading === repo.name ? "..." : "Activity"}
                 </Button>
+                
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 min-w-[100px] text-[10px] h-8 gap-1 border-primary/20 hover:border-primary/50 text-primary"
+                      disabled={generatingUml === repo.name}
+                    >
+                      {generatingUml === repo.name ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <GitGraph className="h-3 w-3" />
+                      )}
+                      {generatingUml === repo.name ? "Analyzing..." : "Gen UML"}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="bg-[#0a0a0c] border-white/10 text-white">
+                    {["Class", "Sequence", "Activity", "Use Case"].map((type) => (
+                      <DropdownMenuItem 
+                        key={type} 
+                        onClick={() => handleGenerateUML(repo, type)}
+                        className="text-xs hover:bg-primary/20 cursor-pointer"
+                      >
+                        {type} Diagram
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
                 <Button
                   size="sm"
-                  className={`flex-1 text-xs ${repo.autoMerge ? "bg-success/20 text-success hover:bg-success/30 border-0" : "gradient-primary text-primary-foreground border-0"}`}
+                  className={`flex-1 min-w-[100px] text-[10px] h-8 ${repo.autoMerge ? "bg-success/20 text-success hover:bg-success/30 border-0" : "gradient-primary text-primary-foreground border-0"}`}
                   onClick={() => handleToggleAutoMerge(repo)}
                   disabled={repo.autoMerge}
                 >
@@ -491,6 +583,81 @@ const Repositories = () => {
           ))}
         </div>
       )}
+      <Dialog open={showUmlModal} onOpenChange={setShowUmlModal}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col p-0 border-primary/20 bg-[#0a0a0c]">
+          <DialogHeader className="p-6 border-b border-white/5">
+            <div className="flex items-center gap-2 text-primary mb-1">
+              <Sparkles className="h-4 w-4" />
+              <span className="text-xs font-bold tracking-widest uppercase">AI Architect</span>
+            </div>
+            <DialogTitle className="text-2xl font-bold text-white">
+              {umlData?.type} Diagram
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground italic">
+              Automatically generated architecture diagram based on repository analysis.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-white/90 flex items-center gap-2">
+                <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Analysis Summary
+              </h3>
+              <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-sm text-muted-foreground leading-relaxed">
+                {umlData?.summary}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white/90 flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  PlantUML Code
+                </h3>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-8 text-xs gap-1.5 hover:bg-white/10"
+                    onClick={() => {
+                      navigator.clipboard.writeText(umlData?.code || "");
+                      toast({ title: "Copied!", description: "PlantUML code copied to clipboard." });
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-8 text-xs gap-1.5 hover:bg-white/10"
+                    onClick={() => {
+                      if (umlData?.code) {
+                        const encoded = plantumlEncoder.encode(umlData.code);
+                        window.open(`http://www.plantuml.com/plantuml/uml/${encoded}`, "_blank");
+                      }
+                    }}
+                  >
+                    <Share2 className="h-3.5 w-3.5" /> View Online
+                  </Button>
+                </div>
+              </div>
+              <div className="relative group">
+                <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-purple-500/10 blur-xl opacity-50 group-hover:opacity-100 transition-opacity" />
+                <pre className="relative p-5 rounded-xl bg-black border border-white/10 text-xs font-mono text-primary/90 overflow-x-auto selection:bg-primary/20 leading-loose">
+                  {umlData?.code}
+                </pre>
+              </div>
+            </div>
+          </div>
+          
+          <div className="p-4 border-t border-white/5 bg-white/[0.02] flex justify-end">
+            <Button onClick={() => setShowUmlModal(false)} className="gradient-primary text-white border-0">
+              Close Analysis
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

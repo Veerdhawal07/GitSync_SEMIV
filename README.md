@@ -155,3 +155,55 @@ If you are redirected back to the login page after authorizing:
 ---
 
 **Happy Coding!** 🚀
+
+
+TO run the mock : python -m backend.mock_demo.py11
+
+
+
+ python -c "
+import asyncio
+from backend.database.connection import AsyncSessionLocal
+from backend.models.schema import WebhookEvent, MergeOperation, Conflict
+from sqlalchemy import select
+
+async def main():
+    async with AsyncSessionLocal() as db:
+        print('--- WEBHOOKS ---')
+        events = (await db.execute(select(WebhookEvent).order_by(WebhookEvent.id.desc()).limit(3))).scalars().all()
+        for op in events: print(f'ID: {op.id}, status: {op.status}, date: {op.created_at}')
+        
+        print('--- MERGOPS ---')
+        ops = (await db.execute(select(MergeOperation).order_by(MergeOperation.id.desc()).limit(3))).scalars().all()
+        for op in ops: print(f'ID: {op.id}, status: {op.status}, branch: {op.source_branch}, date: {op.created_at}')
+        
+        print('--- CONFLICTS ---')
+        cfs = (await db.execute(select(Conflict).order_by(Conflict.id.desc()).limit(3))).scalars().all()
+        for op in cfs: print(f'ID: {op.id}, file: {op.file_path}, resolved: {op.resolved}, date: {op.created_at}')
+
+asyncio.run(main())
+"
+
+
+ python -c "
+import asyncio
+from backend.database.connection import AsyncSessionLocal
+from backend.models.schema import WebhookEvent, MergeOperation, Conflict
+from sqlalchemy import select
+
+async def main():
+    async with AsyncSessionLocal() as db:
+        print('--- WEBHOOKS ---')
+        events = (await db.execute(select(WebhookEvent).order_by(WebhookEvent.id.desc()).limit(3))).scalars().all()
+        for op in events: print(f'ID: {op.id}, status: {op.status}, date: {op.created_at}')
+        
+        print('--- MERGOPS ---')
+        ops = (await db.execute(select(MergeOperation).order_by(MergeOperation.id.desc()).limit(3))).scalars().all()
+        for op in ops: print(f'ID: {op.id}, status: {op.status}, branch: {op.source_branch}, date: {op.created_at}')
+        
+        print('--- CONFLICTS ---')
+        cfs = (await db.execute(select(Conflict).order_by(Conflict.id.desc()).limit(3))).scalars().all()
+        for op in cfs: print(f'ID: {op.id}, file: {op.file_path}, resolved: {op.resolved}, date: {op.created_at}')
+
+asyncio.run(main())
+"

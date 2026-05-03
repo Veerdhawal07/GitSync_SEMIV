@@ -37,4 +37,40 @@ async def connect_repository(req: RepoConnectRequest, db: AsyncSession = Depends
     db.add(repo)
     await db.commit()
     await db.refresh(repo)
-    return repo
+from backend.services.git_engine import GitEngine
+from backend.services.ai_service import generate_repo_uml
+import os
+
+git_engine = GitEngine()
+
+@router.post("/{repo_id}/generate-uml")
+async def get_repo_uml(repo_id: int, type: str = "Class", db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Verify ownership
+    stmt = select(Repository).where(Repository.id == repo_id, Repository.owner_id == current_user.id)
+    repo = (await db.execute(stmt)).scalars().first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    try:
+        # Clone repo to analyze
+        repo_path = git_engine.clone_repo(repo.clone_url, repo.repo_name)
+        
+        # Get file structure (simple tree)
+        file_tree = []
+        for root, dirs, files in os.walk(repo_path):
+            if ".git" in dirs:
+                dirs.remove(".git")
+            level = root.replace(repo_path, '').count(os.sep)
+            indent = ' ' * 4 * level
+            file_tree.append(f"{indent}{os.path.basename(root)}/")
+            sub_indent = ' ' * 4 * (level + 1)
+            for f in files[:10]: # Limit files per dir for prompt length
+                file_tree.append(f"{sub_indent}{f}")
+        
+        structure_str = "\n".join(file_tree[:100]) # Limit overall lines
+        
+        # Call AI service with specific type
+        uml_result = await generate_repo_uml(repo.repo_name, structure_str, uml_type=type)
+        return uml_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
